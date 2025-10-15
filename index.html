@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TransCo Vehicle Dispatch and Monitoring</title>
+    
+    <!-- Leaflet.js for Interactive Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <!-- Leaflet Routing Machine for on-map routes -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <style>
+        :root {
+            --transco-blue: #003366;
+            --transco-light-blue: #005A9C;
+            --background-grey: #f4f7fa;
+            --border-grey: #e1e5ea;
+            --text-dark: #2d3748;
+            --text-light: #718096;
+            --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+            --button-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+            --status-available: #28a745;
+            --status-on-trip: #007bff;
+            --status-maintenance: #ffc107;
+            --status-out-of-service: #dc3545;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            background-color: var(--background-grey);
+            color: var(--text-dark);
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container { display: flex; width: 100%; height: 100%; }
+        .control-panel { width: 40%; max-width: 600px; padding: 24px; background-color: #ffffff; overflow-y: auto; border-right: 1px solid var(--border-grey); display: flex; flex-direction: column; }
+        .map-container { flex-grow: 1; height: 100%; position: relative; }
+        #map { width: 100%; height: 100%; }
+        
+        .panel-header { display: flex; align-items: center; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border-grey); }
+        .panel-header img { width: 50px; height: 50px; margin-right: 16px; }
+        .panel-header h1 { font-size: 24px; font-weight: 700; color: var(--transco-blue); margin: 0; }
+        
+        .dashboard { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 20px; }
+        .stat-card { background-color: #f8f9fa; border: 1px solid var(--border-grey); border-radius: 8px; padding: 12px; text-align: center; }
+        .stat-card .value { font-size: 24px; font-weight: 700; }
+        .stat-card .label { font-size: 12px; color: var(--text-light); }
+        .stat-card[data-status="on-trip"] .value { color: var(--status-on-trip); }
+        .stat-card[data-status="available"] .value { color: var(--status-available); }
+        .stat-card[data-status="maintenance-req"] .value { color: var(--status-maintenance); }
+        .stat-card[data-status="out-of-service"] .value { color: var(--status-out-of-service); }
+        
+        .filters { display: flex; gap: 16px; margin-bottom: 20px; }
+        .search-box { flex-grow: 1; padding: 10px; border: 1px solid var(--border-grey); border-radius: 6px; }
+        
+        .section { margin-bottom: 24px; }
+        .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .section-header h2 { font-size: 20px; color: var(--text-dark); margin: 0; font-weight: 600; }
+        
+        .btn { padding: 8px 16px; border: none; border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s ease-in-out; box-shadow: var(--button-shadow); }
+        .btn-primary { background-color: var(--transco-light-blue); color: white; }
+        .btn-primary:hover { background-color: var(--transco-blue); }
+        .btn-danger { background-color: #e53e3e; color: white; }
+        .btn-danger:hover { background-color: #c53030; }
+        .btn-secondary { background-color: #4a5568; color: white; }
+        .btn-secondary:hover { background-color: var(--text-dark); }
+        
+        .vehicle-card { background-color: #fff; border: 1px solid var(--border-grey); border-left: 5px solid; border-radius: 8px; margin-bottom: 16px; box-shadow: var(--card-shadow); transition: border-color 0.3s; }
+        .vehicle-card[data-status="Available"] { border-left-color: var(--status-available); }
+        .vehicle-card[data-status="On Trip"] { border-left-color: var(--status-on-trip); }
+        .vehicle-card[data-status="Maintenance"] { border-left-color: var(--status-maintenance); }
+        .vehicle-card[data-status="Out of Service"] { border-left-color: var(--status-out-of-service); }
+        
+        .vehicle-card details > summary { padding: 16px; cursor: pointer; list-style: none; }
+        .vehicle-card details > summary::-webkit-details-marker { display: none; }
+        .vehicle-card-header { display: flex; justify-content: space-between; align-items: center; }
+        .vehicle-card-header h3 { margin: 0; font-size: 16px; font-weight: 600; }
+        .vehicle-card-body { padding: 0 16px 16px; border-top: 1px solid var(--border-grey); }
+        
+        .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+        .form-group { display: flex; flex-direction: column; }
+        .form-group.full-width { grid-column: 1 / -1; }
+        .form-group label { font-size: 12px; font-weight: 500; color: var(--text-light); margin-bottom: 4px; }
+        .form-group input, .form-group select, .form-group textarea { padding: 8px; border: 1px solid var(--border-grey); border-radius: 4px; font-size: 14px; }
+        .destination-group { display: flex; gap: 8px; align-items: flex-end; }
+        .destination-group .form-group { flex-grow: 1; }
+        
+        .maintenance-alert { color: var(--status-maintenance); font-weight: bold; font-size: 12px; }
+        
+        .driver-list-item { display: flex; justify-content: space-between; align-items: center; padding: 12px; background-color: #f8fafc; border: 1px solid var(--border-grey); border-radius: 6px; margin-bottom: 8px; }
+        
+        .vehicle-marker { color: white; border: 2px solid white; border-radius: 8px; padding: 4px 8px; font-size: 12px; font-weight: bold; text-align: center; white-space: nowrap; box-shadow: 0 2px 5px rgba(0,0,0,0.3); transition: background-color 0.3s; }
+        .marker-status-Available { background-color: var(--status-available); }
+        .marker-status-On-Trip { background-color: var(--status-on-trip); }
+        .marker-status-Maintenance { background-color: var(--status-maintenance); }
+        .marker-status-Out-of-Service { background-color: var(--status-out-of-service); }
+        
+        .leaflet-routing-container { display: none; }
+        
+        .app-footer { font-size: 12px; color: var(--text-light); text-align: center; padding: 8px 0; border-top: 1px solid var(--border-grey); margin-top: auto; }
+        .toast { position: absolute; top: 20px; right: 20px; background-color: rgba(0,0,0,0.75); color: white; padding: 12px 20px; border-radius: 8px; z-index: 1001; opacity: 0; transition: opacity 0.5s; pointer-events: none; }
+        .toast.show { opacity: 1; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <!-- LEFT COLUMN: CONTROL PANEL -->
+        <div class="control-panel" id="control-panel">
+            <header class="panel-header">
+                <img src="https://placehold.co/100x100/003366/FFFFFF?text=TC" alt="TransCo Logo">
+                <h1>Dispatch Control</h1>
+            </header>
+
+            <div class="section dashboard" id="dashboard-stats"></div>
+
+            <div class="section filters">
+                <input type="text" id="vehicle-search" class="search-box" placeholder="Search vehicles by plate or model...">
+                <input type="text" id="driver-search" class="search-box" placeholder="Search drivers by name...">
+            </div>
+            
+            <div class="section" id="fleet-management">
+                <div class="section-header">
+                    <h2>Fleet Management</h2>
+                    <button class="btn btn-primary" data-action="add-vehicle">Add New Vehicle</button>
+                </div>
+                <div id="vehicle-list"></div>
+            </div>
+
+            <div class="section" id="driver-management">
+                <div class="section-header">
+                    <h2>Driver Management</h2>
+                    <button class="btn btn-primary" data-action="add-driver">Add New Driver</button>
+                </div>
+                <div id="driver-list"></div>
+            </div>
+
+            <div class="app-footer" id="app-footer"></div>
+        </div>
+
+        <!-- RIGHT COLUMN: MAP -->
+        <div class="map-container">
+            <div id="map"></div>
+            <div id="toast-message" class="toast"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const app = {
+                // --- STATE ---
+                state: {
+                    vehicles: [
+                        { id: 1, plate: 'ABC-1234', model: 'Toyota Hilux', odometer: 54321, driverId: 1, status: 'Available', nextServiceKm: 60000, jobOrder: { ticket: '', destination: '', task: '', contactPerson: '', contactPhone: '', priority: 'Medium' } },
+                        { id: 2, plate: 'DEF-5678', model: 'Mitsubishi Montero Sport', odometer: 12345, driverId: 2, status: 'On Trip', nextServiceKm: 20000, jobOrder: { ticket: 'T-001', destination: 'Batangas Port', task: 'Inspect Substation', contactPerson: 'John Doe', contactPhone: '09171234567', priority: 'High' } },
+                        { id: 3, plate: 'GHI-9012', model: 'Ford Ranger', odometer: 67890, driverId: 3, status: 'Maintenance', nextServiceKm: 70000, jobOrder: { ticket: '', destination: '', task: '', contactPerson: '', contactPhone: '', priority: 'Medium' } },
+                        { id: 4, plate: 'JKL-3456', model: 'Toyota Innova', odometer: 19800, driverId: null, status: 'Available', nextServiceKm: 20000, jobOrder: { ticket: '', destination: '', task: '', contactPerson: '', contactPhone: '', priority: 'Medium' } },
+                        { id: 5, plate: 'MNO-7890', model: 'Nissan Navara', odometer: 44556, driverId: 5, status: 'Out of Service', nextServiceKm: 50000, jobOrder: { ticket: '', destination: '', task: '', contactPerson: '', contactPhone: '', priority: 'Medium' } },
+                    ],
+                    drivers: [
+                        { id: 1, name: 'Goku' }, { id: 2, name: 'Vegeta' }, { id: 3, name: 'Piccolo' }, { id: 4, name: 'Gohan' }, { id: 5, name: 'Krillin' }, { id: 6, name: 'Trunks' }, { id: 7, name: 'Master Roshi' }, { id: 8, name: 'Bulma' }, { id: 9, name: 'Android 18' }, { id: 10, name: 'Yamcha' },
+                    ]
+                },
+                map: null,
+                markers: {},
+                routes: {},
+                transCoHQ: [14.6470, 121.0485],
+                
+                // --- UI ELEMENTS ---
+                ui: {
+                    controlPanel: document.getElementById('control-panel'),
+                    dashboard: document.getElementById('dashboard-stats'),
+                    vehicleList: document.getElementById('vehicle-list'),
+                    driverList: document.getElementById('driver-list'),
+                    vehicleSearch: document.getElementById('vehicle-search'),
+                    driverSearch: document.getElementById('driver-search'),
+                    footer: document.getElementById('app-footer'),
+                    toast: document.getElementById('toast-message'),
+                },
+
+                // --- INITIALIZATION ---
+                init() {
+                    this.initMap();
+                    this.render();
+                    this.initEventListeners();
+                    this.ui.footer.textContent = `Pasig City, Metro Manila | Last Refresh: ${new Date().toLocaleString('en-US', { hour: 'numeric', minute: 'numeric', hour12: true })}`;
+                    this.state.vehicles.forEach(v => {
+                        if (v.status === 'On Trip' && v.jobOrder.destination) this.mapHandlers.setDestinationOnMap(v.id, false);
+                    });
+                },
+
+                initMap() {
+                    this.map = L.map('map').setView(this.transCoHQ, 15);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(this.map);
+                    L.marker(this.transCoHQ, { title: "TransCo Headquarters" }).addTo(this.map).bindPopup("<b>TransCo HQ</b>").openPopup();
+                },
+
+                // --- EVENT HANDLING ---
+                initEventListeners() {
+                    this.ui.controlPanel.addEventListener('click', this.eventHandlers.handlePanelClick.bind(this));
+                    this.ui.controlPanel.addEventListener('change', this.eventHandlers.handlePanelChange.bind(this));
+                    this.ui.vehicleSearch.addEventListener('keyup', (e) => this.view.filterList(e.target.value, this.ui.vehicleList, 'vehicle'));
+                    this.ui.driverSearch.addEventListener('keyup', (e) => this.view.filterList(e.target.value, this.ui.driverList, 'driver'));
+                },
+
+                // --- DATA MUTATION & STATE MANAGEMENT ---
+                get(type, id) { return this.state[type].find(item => item.id === id); },
+                
+                add(type, data) {
+                    const collection = this.state[type];
+                    const newId = collection.length > 0 ? Math.max(...collection.map(i => i.id)) + 1 : 1;
+                    const newItem = { id: newId, ...data };
+                    collection.push(newItem);
+                    this.view.addListItem(type, newItem);
+                    this.view.renderDashboard();
+                    if (type === 'drivers') this.view.renderVehicles(); // Re-render vehicle cards to update driver dropdowns
+                },
+
+                remove(type, id) {
+                    this.state[type] = this.state[type].filter(item => item.id !== id);
+                    this.view.removeListItem(type, id);
+                    if (type === 'vehicles') {
+                        this.mapHandlers.removeMapElements(id);
+                    } else if (type === 'drivers') {
+                        // Unassign driver from any vehicles
+                        this.state.vehicles.forEach(v => { if (v.driverId === id) v.driverId = null; });
+                        this.view.renderVehicles();
+                    }
+                    this.view.renderDashboard();
+                },
+
+                update(type, id, field, value) {
+                    const item = this.get(type, id);
+                    if (!item) return;
+                    
+                    if (['odometer', 'nextServiceKm', 'driverId'].includes(field)) {
+                        item[field] = value === '' ? null : parseInt(value);
+                    } else {
+                        item[field] = value;
+                    }
+                    
+                    this.view.updateListItem('vehicles', item);
+                    this.view.renderDashboard();
+                    this.mapHandlers.updateMarker(id);
+                },
+
+                updateJobOrder(vehicleId, field, value) {
+                    const vehicle = this.get('vehicles', vehicleId);
+                    if (vehicle) vehicle.jobOrder[field] = value;
+                },
+
+                // --- FULL RENDER ---
+                render() {
+                    this.view.renderVehicles.call(this);
+                    this.view.renderDrivers.call(this);
+                    this.view.renderDashboard.call(this);
+                },
+                
+                // --- VIEW / UI LOGIC ---
+                view: {
+                    renderDashboard() {
+                        const stats = {
+                            onTrip: this.state.vehicles.filter(v => v.status === 'On Trip').length,
+                            available: this.state.vehicles.filter(v => v.status === 'Available').length,
+                            maintenanceReq: this.state.vehicles.filter(v => v.status === 'Maintenance' || (v.odometer && v.nextServiceKm && v.odometer >= v.nextServiceKm)).length,
+                            outOfService: this.state.vehicles.filter(v => v.status === 'Out of Service').length,
+                        };
+                        this.ui.dashboard.innerHTML = `
+                            <div class="stat-card" data-status="on-trip"><div class="value">${stats.onTrip}</div><div class="label">On Trip</div></div>
+                            <div class="stat-card" data-status="available"><div class="value">${stats.available}</div><div class="label">Available</div></div>
+                            <div class="stat-card" data-status="maintenance-req"><div class="value">${stats.maintenanceReq}</div><div class="label">Needs Service</div></div>
+                            <div class="stat-card" data-status="out-of-service"><div class="value">${stats.outOfService}</div><div class="label">Out of Service</div></div>
+                        `;
+                    },
+                    renderVehicles() { this.ui.vehicleList.innerHTML = this.state.vehicles.map(v => this.view.getVehicleHTML.call(this, v)).join(''); },
+                    renderDrivers() { this.ui.driverList.innerHTML = this.state.drivers.map(d => this.view.getDriverHTML(d)).join(''); },
+                    
+                    getDriverOptions(selectedDriverId) {
+                        return [
+                            '<option value="">-- Unassigned --</option>',
+                            ...this.state.drivers.map(driver => `<option value="${driver.id}" ${driver.id == selectedDriverId ? 'selected' : ''}>${driver.name}</option>`)
+                        ].join('');
+                    },
+
+                    getVehicleHTML(vehicle) {
+                        const statusOptions = ['Available', 'On Trip', 'Maintenance', 'Out of Service'].map(s => `<option value="${s}" ${s === vehicle.status ? 'selected' : ''}>${s}</option>`).join('');
+                        const priorityOptions = ['Low', 'Medium', 'High'].map(p => `<option value="${p}" ${p === vehicle.jobOrder.priority ? 'selected' : ''}>${p}</option>`).join('');
+                        const needsService = vehicle.odometer >= vehicle.nextServiceKm;
+                        
+                        return `
+                            <div class="vehicle-card" data-id="${vehicle.id}" data-status="${vehicle.status}" data-search-term="${vehicle.plate.toLowerCase()} ${vehicle.model.toLowerCase()}">
+                                <details>
+                                    <summary><div class="vehicle-card-header"><h3>${vehicle.plate} - ${vehicle.model}</h3>${needsService ? '<span class="maintenance-alert">!</span>' : ''}</div></summary>
+                                    <div class="vehicle-card-body">
+                                        <button class="btn btn-danger" data-action="remove-vehicle" data-id="${vehicle.id}" style="float: right; margin-bottom: 10px;">Remove</button>
+                                        <div class="form-grid">
+                                            <div class="form-group"><label>Plate Number</label><input type="text" value="${vehicle.plate}" data-field="plate" data-id="${vehicle.id}"></div>
+                                            <div class="form-group"><label>Vehicle Model</label><input type="text" value="${vehicle.model}" data-field="model" data-id="${vehicle.id}"></div>
+                                            <div class="form-group"><label>Odometer (km)</label><input type="number" value="${vehicle.odometer}" data-field="odometer" data-id="${vehicle.id}"></div>
+                                            <div class="form-group"><label>Next Service (km)</label><input type="number" value="${vehicle.nextServiceKm}" data-field="nextServiceKm" data-id="${vehicle.id}"></div>
+                                            <div class="form-group"><label>Assigned Driver</label><select data-field="driverId" data-id="${vehicle.id}">${this.view.getDriverOptions.call(this, vehicle.driverId)}</select></div>
+                                            <div class="form-group"><label>Status</label><select data-field="status" data-id="${vehicle.id}">${statusOptions}</select></div>
+                                            <hr class="full-width"><h4 class="full-width">Job Order</h4>
+                                            <div class="form-group"><label>Ticket #</label><input type="text" value="${vehicle.jobOrder.ticket}" data-job-field="ticket" data-id="${vehicle.id}"></div>
+                                            <div class="form-group"><label>Priority</label><select data-job-field="priority" data-id="${vehicle.id}">${priorityOptions}</select></div>
+                                            <div class="form-group full-width"><label>Task Description</label><textarea rows="2" data-job-field="task" data-id="${vehicle.id}">${vehicle.jobOrder.task}</textarea></div>
+                                            <div class="form-group full-width destination-group">
+                                                <div class="form-group"><label>Destination Address</label><input type="text" value="${vehicle.jobOrder.destination}" data-job-field="destination" data-id="${vehicle.id}" placeholder="e.g., SM North EDSA"></div>
+                                                <button class="btn btn-secondary" data-action="set-route" data-id="${vehicle.id}">Route</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </details>
+                            </div>
+                        `;
+                    },
+
+                    getDriverHTML(driver) {
+                        return `<div class="driver-list-item" data-id="${driver.id}" data-search-term="${driver.name.toLowerCase()}"><span>${driver.name}</span><button class="btn btn-danger btn-sm" data-action="remove-driver" data-id="${driver.id}">Remove</button></div>`;
+                    },
+
+                    addListItem(type, item) {
+                        const html = type === 'vehicles' ? this.view.getVehicleHTML.call(this, item) : this.view.getDriverHTML(item);
+                        this.ui[`${type}List`].insertAdjacentHTML('beforeend', html);
+                    },
+
+                    removeListItem(type, id) { document.querySelector(`[data-id="${id}"].${type === 'vehicles' ? 'vehicle-card' : 'driver-list-item'}`)?.remove(); },
+                    
+                    updateListItem(type, item) {
+                        if (type !== 'vehicles') return;
+                        const element = document.querySelector(`.vehicle-card[data-id="${item.id}"]`);
+                        if (element) {
+                           element.dataset.status = item.status;
+                           const needsService = item.odometer >= item.nextServiceKm;
+                           const alertEl = element.querySelector('.maintenance-alert');
+                           if (needsService && !alertEl) {
+                               element.querySelector('.vehicle-card-header').insertAdjacentHTML('beforeend', '<span class="maintenance-alert">!</span>');
+                           } else if (!needsService && alertEl) {
+                               alertEl.remove();
+                           }
+                        }
+                    },
+                    
+                    filterList(query, container, type) {
+                        const searchTerm = query.toLowerCase();
+                        container.querySelectorAll(type === 'vehicle' ? '.vehicle-card' : '.driver-list-item').forEach(item => {
+                            item.style.display = item.dataset.searchTerm.includes(searchTerm) ? '' : 'none';
+                        });
+                    },
+                    
+                    showToast(message) {
+                        this.ui.toast.textContent = message;
+                        this.ui.toast.classList.add('show');
+                        setTimeout(() => this.ui.toast.classList.remove('show'), 3000);
+                    }
+                },
+                
+                // --- EVENT HANDLER LOGIC ---
+                eventHandlers: {
+                    handlePanelClick(e) {
+                        const target = e.target.closest('[data-action]');
+                        if (!target) return;
+
+                        const { action, id } = target.dataset;
+                        const vehicleId = parseInt(id);
+
+                        switch(action) {
+                            case 'add-vehicle':
+                                this.add('vehicles', { plate: `NEW-${Date.now() % 10000}`, model: 'New Vehicle', odometer: 0, driverId: null, status: 'Available', nextServiceKm: 10000, jobOrder: { ticket: '', destination: '', task: '', priority: 'Medium' } });
+                                break;
+                            case 'remove-vehicle':
+                                if (confirm('Are you sure you want to remove this vehicle?')) this.remove('vehicles', vehicleId);
+                                break;
+                            case 'add-driver':
+                                const name = prompt("Enter new driver's name:");
+                                if (name && name.trim()) this.add('drivers', { name: name.trim() });
+                                break;
+                            case 'remove-driver':
+                                if (confirm('Are you sure you want to remove this driver?')) this.remove('drivers', parseInt(id));
+                                break;
+                            case 'set-route':
+                                this.mapHandlers.setDestinationOnMap.call(this, vehicleId, true);
+                                break;
+                        }
+                    },
+                    handlePanelChange(e) {
+                        const { field, jobField, id } = e.target.dataset;
+                        if (!id) return;
+
+                        const vehicleId = parseInt(id);
+                        const value = e.target.value;
+
+                        if (field) this.update('vehicles', vehicleId, field, value);
+                        if (jobField) this.updateJobOrder(vehicleId, jobField, value);
+                    }
+                },
+                
+                // --- MAP HANDLER LOGIC ---
+                mapHandlers: {
+                    async setDestinationOnMap(vehicleId, zoomToView) {
+                        const vehicle = this.get('vehicles', vehicleId);
+                        if (!vehicle || !vehicle.jobOrder.destination) return;
+
+                        try {
+                            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(vehicle.jobOrder.destination)}`);
+                            if (!response.ok) throw new Error(`Geocoding service failed with status: ${response.status}`);
+                            const data = await response.json();
+
+                            if (data && data.length > 0) {
+                                const { lat, lon } = data[0];
+                                const coords = [parseFloat(lat), parseFloat(lon)];
+                                this.mapHandlers.updateMarker.call(this, vehicleId, coords);
+
+                                if (this.routes[vehicleId]) this.map.removeControl(this.routes[vehicleId]);
+                                
+                                const routingControl = L.Routing.control({
+                                    waypoints: [L.latLng(this.transCoHQ), L.latLng(coords)],
+                                    router: L.routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
+                                    routeWhileDragging: false, addWaypoints: false, show: false,
+                                    lineOptions: { styles: [{ color: 'var(--transco-blue)', opacity: 0.8, weight: 6 }] }
+                                }).addTo(this.map);
+
+                                routingControl.on('routingerror', (e) => {
+                                    console.error("Routing Error:", e.error);
+                                    this.view.showToast.call(this, "Could not calculate the route. Service may be unavailable.");
+                                    if (this.routes[vehicleId]) {
+                                        this.map.removeControl(this.routes[vehicleId]);
+                                        delete this.routes[vehicleId];
+                                    }
+                                });
+
+                                this.routes[vehicleId] = routingControl;
+                                if (zoomToView) this.map.fitBounds([this.transCoHQ, coords], { padding: [50, 50] });
+
+                            } else {
+                                this.view.showToast.call(this, 'Destination not found.');
+                            }
+                        } catch (error) {
+                            console.error('Geocoding/Routing error:', error);
+                            this.view.showToast.call(this, 'Error contacting map services.');
+                        }
+                    },
+                    updateMarker(vehicleId, newCoords = null) {
+                        const vehicle = this.get('vehicles', vehicleId);
+                        if (!vehicle) return;
+
+                        const createIcon = (v) => L.divIcon({
+                            className: `vehicle-marker marker-status-${v.status.replace(/\s+/g, '-')}`,
+                            html: `<div>${v.plate}</div>`,
+                            iconSize: [80, 25], iconAnchor: [40, 12]
+                        });
+                        
+                        const marker = this.markers[vehicleId];
+                        if (marker) {
+                            if (newCoords) marker.setLatLng(newCoords);
+                            marker.setIcon(createIcon(vehicle));
+                        } else if (newCoords) {
+                            this.markers[vehicleId] = L.marker(newCoords, { icon: createIcon(vehicle) }).addTo(this.map);
+                        }
+
+                        if (this.markers[vehicleId]) {
+                            const driver = this.get('drivers', vehicle.driverId);
+                            this.markers[vehicleId].bindPopup(`<b>Plate:</b> ${vehicle.plate}<br><b>Driver:</b> ${driver ? driver.name : 'N/A'}<br><b>Status:</b> ${vehicle.status}`);
+                        }
+                    },
+                    removeMapElements(vehicleId) {
+                        if (this.markers[vehicleId]) { this.map.removeLayer(this.markers[vehicleId]); delete this.markers[vehicleId]; }
+                        if (this.routes[vehicleId]) { this.map.removeControl(this.routes[vehicleId]); delete this.routes[vehicleId]; }
+                    }
+                }
+            };
+            app.init();
+        });
+    </script>
+</body>
+</html>
+
